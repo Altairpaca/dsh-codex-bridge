@@ -1,0 +1,2 @@
+name: PTC 模式 (GPT + Codex 子代理)
+description: 具备标准模式的全部能力,通过 Code Mode SDK 呈现工具,并启用 Codex 子代理(subagent_codex)委托;主对话模型走 OpenAI GPT(通过 ChatGPT 登录认证)。

@@ -1,0 +1,14 @@
+# Sensitive / local-only files that must never be committed.
+# Credentials and tokens live outside this repo in ~/.dsh and ~/.codex.
+.credentials.yaml
+auth.json
+*.env
+.env*
+*.local
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
+*.swp
+.idea/
+.vscode/
