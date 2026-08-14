@@ -25,7 +25,16 @@ setx NODE_USE_ENV_PROXY "1"   # 关键:让 node 的 fetch/WebSocket 读代理环
 
 `NODE_USE_ENV_PROXY=1` 必须设置,否则 DSH 宿主(node 进程)的 fetch 与 WebSocket **不读** `HTTPS_PROXY`,GPT 请求会以 `TRANSPORT` 错误失败。
 
-设置后**重启 DSH**(宿主进程启动时已捕获环境变量,运行中不会热更新)。
+设置后**必须重启 DSH**(宿主进程启动时已捕获环境变量,运行中不会热更新),且**要从新打开的终端启动**:`setx` 只影响新进程,已运行的终端与宿主进程不会获得新变量。
+
+```powershell
+# 1) 关闭当前 dsh web(关掉运行它的终端/Ctrl+C)
+# 2) 新开一个终端,确认变量已生效:
+echo $env:HTTPS_PROXY        # 应输出 http://127.0.0.1:7897
+echo $env:NODE_USE_ENV_PROXY # 应输出 1
+# 3) 重启:
+dsh web
+```
 
 ## 2. 同步 Codex token 到 DSH 凭证
 
@@ -99,11 +108,25 @@ bun add -g @deepseek-ai/dsh-subagent-codex
    - 发送一条消息,回复由 GPT 生成
 4. 验证 subagent:让模型使用 `subagent_codex` 工具委托一个子任务
 
+## 一键体检
+
+链路出问题时先跑体检脚本,按输出的 FAIL/WARN 逐项修复:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\check-codex-health.ps1
+# 换代理端口: ... -ProxyPort 7890
+```
+
+检查项:codex CLI 安装与登录、access_token 过期时间、凭证与 auth.json 一致性、
+代理端口可达性、当前进程代理环境(提示宿主是否需重启)、subagent-codex 组件。
+
 ## 故障排查
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| `TRANSPORT` / `fetch failed` | 宿主进程无代理或未设 `NODE_USE_ENV_PROXY` | 设置环境变量后重启 DSH |
+| `TRANSPORT` / `fetch failed` | 宿主进程无代理或未设 `NODE_USE_ENV_PROXY` | 设置环境变量后,从**新开终端**重启 DSH(旧终端/旧进程不会继承 setx 变量) |
+| GPT 模型报错但 `codex exec` 正常 | 宿主进程环境缺代理变量(setx 晚于宿主启动) | 关闭 `dsh web`,新开终端确认 `echo $env:HTTPS_PROXY` 有值后重启 |
+| `subagent_codex` 工具缺失 | `cordis.patch.yml` 写入晚于宿主启动,补丁未加载 | 重启宿主(补丁只在启动时加载) |
 | `401` / 凭证过期 | access_token 过期 | 重跑 `sync-codex-token.ps1` |
 | 模型选择器无 GPT | settings.yaml 的 `llm-pi-ai.providers` 缺失 | 检查第 4 节配置 |
 | `subagent_codex` 工具缺失 | 宿主未注册 `subagent-codex` 行或未装包 | 检查第 5 节,重启 DSH |

@@ -6,7 +6,8 @@
 
 - `agent-presets/code-gpt/` — DSH agent preset:主对话模型走 GPT(openai-codex provider),并启用 Codex 子代理委托(`subagent_codex` 工具)
 - `scripts/sync-codex-token.ps1` — 把 Codex 登录凭证(access token)同步到 DSH 凭证,供 DSH 的 LLM 路由使用
-- `docs/` — 安装与配置指南
+- `scripts/check-codex-health.ps1` — 一键体检:登录、token 过期时间、凭证一致性、代理、宿主环境、subagent 组件
+- `docs/` — 安装与配置指南、部署对话实录
 
 ## 工作原理
 
@@ -78,7 +79,15 @@ llm-pi-ai:
 
 并安装 provider 包:`bun add -g @deepseek-ai/dsh-subagent-codex`(需与你的 DSH 版本匹配的 rc 版本)。
 
-### 5. 重启 DSH
+### 5. 体检(可选但推荐)
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/check-codex-health.ps1
+```
+
+输出全部 `OK` 即链路健康;有 `WARN`/`FAIL` 按提示修复。常见问题:设置代理后**未从新终端重启 DSH**(宿主进程不会继承 setx 变量)、补丁写入后未重启宿主。
+
+### 6. 重启 DSH
 
 新会话将默认使用 `code-gpt` 预设:主对话模型为 GPT,模型选择器中可见全部 GPT 模型,并可使用 `subagent_codex` 工具委托 Codex。
 
