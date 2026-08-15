@@ -1,0 +1,8 @@
+{
+  "name": "dsh-codex-bridge-runtime",
+  "private": true,
+  "type": "module",
+  "bin": { "dsh-codex": "src/cli.ts" },
+  "scripts": { "start": "bun src/cli.ts", "test": "bun test", "typecheck": "tsc --noEmit" },
+  "engines": { "node": ">=20" }
+}

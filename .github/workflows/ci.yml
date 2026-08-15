@@ -1,0 +1,21 @@
+name: bridge-ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile=false
+      - run: bun test
+      - run: bunx tsc --noEmit
+      - name: Check sensitive filenames
+        shell: bash
+        run: |
+          ! git ls-files | grep -E '(^|/)(auth.json|.credentials.yaml|.*session.*|.*.env$)'

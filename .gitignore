@@ -5,6 +5,10 @@ auth.json
 *.env
 .env*
 *.local
+.dsh/
+*.snapshot.json
+snapshot.json
+*.lock
 
 # OS / editor noise
 Thumbs.db

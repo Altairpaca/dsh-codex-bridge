@@ -1,0 +1,17 @@
+import type { AuthSnapshot } from './types.ts';
+import { expiresAtMs } from './types.ts';
+import { singleFlight, FileLock } from './lock.ts';
+import type { SnapshotStore } from '../store/snapshot-store.ts';
+import type { AuthSource } from './sources/types.ts';
+export type AuthStatus = 'UNKNOWN' | 'NEED_LOGIN' | 'VALID' | 'EXPIRING' | 'REFRESHING' | 'REFRESH_FAILED' | 'UNAVAILABLE' | 'CORRUPT';
+export interface AuthManagerOptions { store?: SnapshotStore; source?: AuthSource; refreshSkew?: number; lockPath?: string; lock?: { timeoutMs?: number; staleMs?: number }; refresh?: (snapshot: AuthSnapshot) => Promise<AuthSnapshot>; now?: () => number; }
+export class AuthManager {
+  status: AuthStatus = 'UNKNOWN'; snapshot?: AuthSnapshot; lastError?: Error; readonly refreshSkew: number; private readonly now: () => number;
+  constructor(private readonly options: AuthManagerOptions = {}) { this.refreshSkew = options.refreshSkew ?? 60_000; this.now = options.now ?? Date.now; }
+  private classify(snapshot?: AuthSnapshot) { if (!snapshot?.accessToken) this.status = 'NEED_LOGIN'; else { const expiry = expiresAtMs(snapshot.expiresAt); this.status = expiry !== undefined && expiry <= this.now() + this.refreshSkew ? 'EXPIRING' : 'VALID'; } }
+  async load(): Promise<AuthSnapshot | undefined> { try { this.snapshot = await this.options.store?.read(); if (!this.snapshot && this.options.source) { const result = await this.options.source.read(); this.snapshot = result.snapshot; if (!this.snapshot) { this.status = result.status === 'corrupt' ? 'CORRUPT' : result.status === 'unavailable' ? 'UNAVAILABLE' : 'NEED_LOGIN'; this.lastError = result.error; return undefined; } } this.classify(this.snapshot); return this.snapshot; } catch (error) { this.status = 'CORRUPT'; this.lastError = error as Error; return undefined; } }
+  private async refreshNow(): Promise<AuthSnapshot> { if (!this.snapshot) await this.load(); if (!this.snapshot) throw new Error('需要登录'); if (!this.options.refresh) throw new Error('当前认证源不支持自动续签，请重新运行官方登录流程'); return singleFlight('auth-refresh', async () => { this.status = 'REFRESHING'; let lock: FileLock | undefined; try { if (this.options.lockPath) lock = await FileLock.acquire(this.options.lockPath, this.options.lock); const next = await this.options.refresh!(this.snapshot!); this.snapshot = next; if (this.options.store) await this.options.store.write(next); this.classify(next); return next; } catch (error) { this.status = 'REFRESH_FAILED'; this.lastError = error as Error; throw error; } finally { if (lock) await lock.release(); } }); }
+  async ensureValid(): Promise<AuthSnapshot> { if (!this.snapshot) await this.load(); const expiry = expiresAtMs(this.snapshot?.expiresAt); if (this.snapshot && (expiry === undefined || expiry > this.now() + this.refreshSkew)) { this.status = 'VALID'; return this.snapshot; } return this.refreshNow(); }
+  async execute<T>(request: (accessToken: string) => Promise<T | { status: number }>): Promise<T | { status: number }> { const first = await request((await this.ensureValid()).accessToken); if (typeof first === 'object' && first !== null && 'status' in first && (first as { status: number }).status === 401) return request((await this.refreshNow()).accessToken); return first; }
+}
+export const AuthManagerStatus = { UNKNOWN: 'UNKNOWN', NEED_LOGIN: 'NEED_LOGIN', VALID: 'VALID', EXPIRING: 'EXPIRING', REFRESH_FAILED: 'REFRESH_FAILED', UNAVAILABLE: 'UNAVAILABLE', CORRUPT: 'CORRUPT' } as const;

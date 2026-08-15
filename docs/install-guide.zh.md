@@ -1,6 +1,6 @@
 # 安装与配置指南
 
-本指南把"DSH 使用 OpenAI GPT(Codex 登录认证)"的完整配置步骤拆成可复现的清单。所有路径基于 Windows;macOS/Linux 仅 `~/.codex`、`~/.dsh` 路径相同,无需其他改动。
+本指南把 dsh-codex-bridge 的登录、代理、启动和 DSH 集成拆成可复现清单。当前 runtime CLI 优先调用官方 Codex 登录；旧 PowerShell 同步脚本仅作为 legacy fallback。路径示例基于 Windows，macOS/Linux 需按平台调整命令。
 
 ## 0. 前置条件
 
@@ -11,42 +11,40 @@
 | DSH | `dsh --version` | 当前开发版 `0.1.0-rc.x` |
 | 网络 | `codex doctor` | 中国大陆用户需代理,见下节 |
 
-## 1. 网络代理(中国大陆必需)
+## 1. 网络代理（按需）
 
-Codex 与 DSH 的 `openai-codex` provider 都要访问 `chatgpt.com`。以 Clash Verge 为例(混合端口 7897):
+Codex 与 DSH 的 `openai-codex` provider 都要访问 `chatgpt.com`。bridge 不要求任何代理软件，支持标准 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY`，也可以通过 CLI 或 `~/.dsh/codex-bridge/config.json` 配置。以下仅是通用示例，地址和协议由用户代理后端决定：
 
 ```powershell
-setx HTTPS_PROXY "http://127.0.0.1:7897"
-setx HTTP_PROXY  "http://127.0.0.1:7897"
-setx ALL_PROXY   "http://127.0.0.1:7897"
-setx NO_PROXY    "localhost,127.0.0.1,::1"
-setx NODE_USE_ENV_PROXY "1"   # 关键:让 node 的 fetch/WebSocket 读代理环境变量
+$env:HTTPS_PROXY = "http://proxy.example:8080"
+$env:HTTP_PROXY  = "http://proxy.example:8080"
+$env:ALL_PROXY   = "http://proxy.example:8080"
+$env:NO_PROXY    = "localhost,127.0.0.1,::1"
+# 不使用代理时清除这些变量即可；bridge 不自动修改系统环境。
 ```
 
-`NODE_USE_ENV_PROXY=1` 必须设置,否则 DSH 宿主(node 进程)的 fetch 与 WebSocket **不读** `HTTPS_PROXY`,GPT 请求会以 `TRANSPORT` 错误失败。
+bridge 会诊断宿主是否继承代理变量；具体 Node/DSH 版本若需要 `NODE_USE_ENV_PROXY=1`，可在启动前显式设置，但这不是某个代理后端的硬性要求。
 
 设置后**必须重启 DSH**(宿主进程启动时已捕获环境变量,运行中不会热更新),且**要从新打开的终端启动**:`setx` 只影响新进程,已运行的终端与宿主进程不会获得新变量。
 
 ```powershell
 # 1) 关闭当前 dsh web(关掉运行它的终端/Ctrl+C)
 # 2) 新开一个终端,确认变量已生效:
-echo $env:HTTPS_PROXY        # 应输出 http://127.0.0.1:7897
-echo $env:NODE_USE_ENV_PROXY # 应输出 1
+echo $env:HTTPS_PROXY        # 应输出你配置的代理 URL（无代理可为空）
+echo $env:NO_PROXY            # 应包含 localhost/127.0.0.1（如适用）
 # 3) 重启:
 dsh web
 ```
 
-## 2. 同步 Codex token 到 DSH 凭证
+## 2. 登录、状态与启动体检
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\sync-codex-token.ps1
+bun src\cli.ts auth login
+bun src\cli.ts auth status
+bun src\cli.ts doctor --json
 ```
 
-脚本读取 `~/.codex/auth.json` 的 `tokens.access_token`,写入 `~/.dsh/.credentials.yaml` 的 `CODEX_ACCESS_TOKEN`(保留其他键)。
-
-- access_token 有效期约 10 天(与 `exp` 声明一致)
-- 过期后重新执行本脚本即可(Codex CLI 每次运行会刷新 `auth.json`)
-- 若脚本报错,先重跑 `codex login`
+登录由官方 `codex login` 完成。当前 auth-json source 是只读兼容路径，不保存 refresh token；自动续签 source、启动门禁和 DSH 动态 credential hook 将按 `docs/roadmap.zh.md` 完成。旧环境仍可使用 `scripts\sync-codex-token.ps1`，但过期后必须手工同步。
 
 ## 3. 安装 preset
 
@@ -92,9 +90,7 @@ bun add -g @deepseek-ai/dsh-subagent-codex
       name: '@deepseek-ai/dsh-subagent-codex'
       config:
         env:
-          HTTPS_PROXY: http://127.0.0.1:7897   # 按需;无代理可省略
-          HTTP_PROXY: http://127.0.0.1:7897
-          ALL_PROXY: http://127.0.0.1:7897
+          # 由 bridge 解析后的标准代理变量按需传入；不要硬编码厂商或固定端口
 ```
 
 `env` 显式传给 `codex app-server --stdio` 子进程,保证子进程能连 ChatGPT(不依赖宿主进程环境)。
@@ -124,8 +120,8 @@ powershell -ExecutionPolicy Bypass -File scripts\check-codex-health.ps1
 
 | 症状 | 原因 | 处理 |
 |---|---|---|
-| `TRANSPORT` / `fetch failed` | 宿主进程无代理或未设 `NODE_USE_ENV_PROXY` | 设置环境变量后,从**新开终端**重启 DSH(旧终端/旧进程不会继承 setx 变量) |
-| GPT 模型报错但 `codex exec` 正常 | 宿主进程环境缺代理变量(setx 晚于宿主启动) | 关闭 `dsh web`,新开终端确认 `echo $env:HTTPS_PROXY` 有值后重启 |
+| `TRANSPORT` / `fetch failed` | 代理未被当前进程继承、代理协议不匹配或 TLS/CA 错误 | 运行 `bun src\cli.ts doctor --json`，检查标准代理变量、NO_PROXY、企业 CA 和启动进程 |
+| GPT 模型报错但 `codex exec` 正常 | DSH 宿主和 Codex CLI 使用了不同的代理解析 | 使用同一份 bridge 配置并重启宿主，分别运行 `doctor` 检查主模型与 subagent |
 | `subagent_codex` 工具缺失 | `cordis.patch.yml` 写入晚于宿主启动,补丁未加载 | 重启宿主(补丁只在启动时加载) |
 | `401` / 凭证过期 | access_token 过期 | 重跑 `sync-codex-token.ps1` |
 | 模型选择器无 GPT | settings.yaml 的 `llm-pi-ai.providers` 缺失 | 检查第 4 节配置 |

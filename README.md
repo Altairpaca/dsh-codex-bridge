@@ -1,12 +1,13 @@
-# dsh-codex-gpt
+# dsh-codex-bridge
 
 让 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 使用 OpenAI GPT 模型 —— 通过 Codex / ChatGPT 登录认证,无需 OpenAI API Key。
 
-这是一个 **agent preset + 辅助脚本** 的组合,贡献给 DSH 社区:
+这是一个面向 DSH 的 Codex bridge:保留 agent preset,并提供认证、代理、启动体检的 runtime CLI。当前自动续签仍依赖官方 Codex source,旧同步脚本仅作为 legacy fallback。
 
 - `agent-presets/code-gpt/` — DSH agent preset:主对话模型走 GPT(openai-codex provider),并启用 Codex 子代理委托(`subagent_codex` 工具)
 - `scripts/sync-codex-token.ps1` — 把 Codex 登录凭证(access token)同步到 DSH 凭证,供 DSH 的 LLM 路由使用
-- `scripts/check-codex-health.ps1` — 一键体检:登录、token 过期时间、凭证一致性、代理、宿主环境、subagent 组件
+- `scripts/check-codex-health.ps1` — 兼容旧部署的一键体检
+- `src/` / `package.json` — bridge runtime:登录状态、代理解析、启动门禁和安全 snapshot
 - `docs/` — 安装与配置指南、部署对话实录
 
 ## 工作原理
@@ -36,13 +37,17 @@ DSH 内置的 `@deepseek-ai/dsh-llm-pi-ai` 适配器支持 pi-ai 的 **`openai-c
 Copy-Item -Recurse agent-presets/code-gpt "$HOME\.dsh\.agent-presets\code-gpt"
 ```
 
-### 2. 同步凭证
+### 2. 登录与状态
+
+优先使用 bridge CLI 调用官方 Codex 登录：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/sync-codex-token.ps1
+bun src/cli.ts auth login
+bun src/cli.ts auth status
+bun src/cli.ts doctor
 ```
 
-这会从 `~/.codex/auth.json` 读取最新的 access token,写入 `~/.dsh/.credentials.yaml` 的 `CODEX_ACCESS_TOKEN`。token 约 10 天过期,过期后重跑本脚本(或重新 `codex login`)即可。
+当前 CLI 会调用官方 `codex login`，并以只读方式读取登录状态；自动 refresh source 尚在建设中。旧部署可暂时使用 `scripts/sync-codex-token.ps1`，但它只同步 access token，属于 legacy fallback。
 
 ### 3. 注册 provider 并设为默认
 
@@ -72,9 +77,8 @@ llm-pi-ai:
       name: '@deepseek-ai/dsh-subagent-codex'
       config:
         env:
-          HTTPS_PROXY: http://127.0.0.1:7897   # 按需;无代理可省略
-          HTTP_PROXY: http://127.0.0.1:7897
-          ALL_PROXY: http://127.0.0.1:7897
+          # 代理由标准 HTTPS_PROXY/HTTP_PROXY/ALL_PROXY 按需提供
+          # 不要求 Clash、固定端口或特定代理后端
 ```
 
 并安装 provider 包:`bun add -g @deepseek-ai/dsh-subagent-codex`(需与你的 DSH 版本匹配的 rc 版本)。

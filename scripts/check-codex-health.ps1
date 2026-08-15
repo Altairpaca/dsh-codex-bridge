@@ -1,10 +1,10 @@
-﻿# check-codex-health.ps1
+# check-codex-health.ps1
 # DSH + Codex/GPT 链路一键体检:
 #   1. Codex CLI 安装与版本
 #   2. codex 登录状态 (ChatGPT OAuth)
 #   3. access_token 存在性与过期时间 (JWT exp)
 #   4. DSH 凭证 CODEX_ACCESS_TOKEN 与 auth.json 是否一致
-#   5. 代理端口可达性 (Clash Verge 默认 7897, 可用 -ProxyPort 覆盖)
+#   5. 可选代理端口可达性（不绑定任何代理厂商或默认端口）
 #   6. 当前进程环境中的代理变量 (DSH 宿主需重启后才会继承 setx 的变量)
 #   7. subagent-codex 包与宿主补丁文件检查
 #   8. 结论与修复建议
@@ -14,7 +14,7 @@
 #   powershell -ExecutionPolicy Bypass -File scripts\check-codex-health.ps1 -ProxyPort 7890
 
 param(
-    [int]$ProxyPort = 7897
+    [int]$ProxyPort = 0
 )
 
 $ErrorActionPreference = 'Continue'
@@ -109,12 +109,14 @@ if (Test-Path $credPath) {
 }
 
 Write-Host ""
-Write-Host ('5) 代理可达性 (127.0.0.1:' + $ProxyPort + ')') -ForegroundColor Cyan
-$t = Test-NetConnection -ComputerName 127.0.0.1 -Port $ProxyPort -WarningAction SilentlyContinue
-if ($t.TcpTestSucceeded) {
-    Report 'OK' '代理端口可达 (Clash Verge 运行中)'
+if ($ProxyPort -gt 0) {
+    Write-Host ('5) 可选代理端口探测 (127.0.0.1:' + $ProxyPort + ')') -ForegroundColor Cyan
+    $t = Test-NetConnection -ComputerName 127.0.0.1 -Port $ProxyPort -WarningAction SilentlyContinue
+    if ($t.TcpTestSucceeded) { Report 'OK' ('代理端口可达 (端口 ' + $ProxyPort + ')') }
+    else { Report 'WARN' ('指定代理端口不可达: ' + $ProxyPort) }
 } else {
-    Report 'FAIL' ('代理端口不可达。修复: 启动 Clash Verge (或换端口 -ProxyPort ' + $ProxyPort + ')')
+    Write-Host '5) 代理端口探测已跳过（标准代理 URL 由 bridge doctor 解析）' -ForegroundColor Cyan
+    Report 'OK' '未绑定固定代理端口'
 }
 
 Write-Host ""
